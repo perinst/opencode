@@ -3,7 +3,7 @@
 # Override the plugin location with $env:UA_PLUGIN_ROOT if it is installed elsewhere.
 
 param(
-    [int]$Port = 5173
+    [int]$Port = 55817
 )
 
 $ErrorActionPreference = "Stop"
