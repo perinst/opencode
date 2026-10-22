@@ -2,10 +2,11 @@ import { $ } from "bun"
 import { describe, expect } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { Deferred, Effect, Fiber, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, PlatformError } from "effect"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Git } from "@opencode/core/git"
 import { Global } from "@opencode/util/global"
+import { FSUtil } from "@opencode/util/fs-util"
 import { Location } from "@opencode/core/location"
 import { AbsolutePath, RelativePath } from "@opencode/core/schema"
 import { Snapshot } from "@opencode/core/snapshot"
@@ -360,6 +361,46 @@ describe("Snapshot", () => {
             yield* registration.dispose
             expect(yield* snapshot.capture()).toBeDefined()
           }).pipe(Effect.provide(snapshotLayer(tmp.path, project)))
+        }),
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  testEffect(Layer.empty).live("reports a worktree removed after discovery as a snapshot error", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) =>
+        Effect.gen(function* () {
+          const project = path.join(tmp.path, "project")
+          yield* Effect.promise(async () => {
+            await fs.mkdir(project)
+            await fs.writeFile(path.join(project, "tracked.txt"), "one\n")
+            await initGit(project, true)
+          })
+          const filesystem = yield* FSUtil.Service.pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node)))
+          const cause = PlatformError.systemError({
+            _tag: "NotFound",
+            module: "FileSystem",
+            method: "realPath",
+            pathOrDescriptor: project,
+          })
+          const layer = AppNodeBuilder.build(Snapshot.node, [
+            Location.node.replace(Location.boundNode(Location.Ref.make({ directory: AbsolutePath.make(project) }))),
+            Global.node.replace(Global.layerWith({ data: tmp.path, config: path.join(tmp.path, "config") })),
+            FSUtil.node.replace(Layer.succeed(FSUtil.Service, { ...filesystem, realPath: () => Effect.fail(cause) })),
+          ])
+          yield* Effect.gen(function* () {
+            const snapshot = yield* Snapshot.Service
+            expect(yield* snapshot.capture()).toBeUndefined()
+            const restore = yield* snapshot.restore({ files: new Map() }).pipe(Effect.exit)
+            expect(Exit.isFailure(restore)).toBe(true)
+            if (!Exit.isFailure(restore)) return
+            expect(restore.cause.reasons.some(Cause.isDieReason)).toBe(false)
+            expect(Cause.findErrorOption(restore.cause)).toMatchObject({
+              _tag: "Some",
+              value: { _tag: "Snapshot.Error", operation: "restore" },
+            })
+          }).pipe(Effect.provide(layer))
         }),
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
     ),
