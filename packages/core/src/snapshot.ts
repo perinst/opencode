@@ -91,7 +91,9 @@ const layer = Layer.effect(
       Effect.gen(function* () {
         const source = yield* git.repo.discover(location.project.directory)
         if (!source) return yield* new Error({ operation: "capture", message: "Project is not a Git repository" })
-        const worktree = AbsolutePath.make(yield* fs.realPath(source.worktree).pipe(Effect.orDie))
+        const worktree = AbsolutePath.make(
+          yield* fs.realPath(source.worktree).pipe(Effect.mapError((cause) => failure("capture", cause))),
+        )
         const gitDirectory = AbsolutePath.make(
           path.join(global.data, "snapshot", location.project.id, Hash.fast(worktree)),
         )
